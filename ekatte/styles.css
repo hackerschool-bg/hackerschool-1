@@ -1,0 +1,22 @@
+#searchBox {
+	width: 170px;
+}
+
+#suggestionDiv {
+	width: 174px;
+	max-height: 100px;
+	position: absolute;
+	top: 0px;
+	left: 0px;
+	overflow-y: scroll;
+	overflow-x: hidden;
+	z-index: 999;
+	background-color: rgb(240,240,240);
+	display: none;
+}
+
+.suggestionLink {
+	display: block;
+	width: 100%;
+	text-decoration: none;
+}
