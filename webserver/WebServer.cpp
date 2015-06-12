@@ -11,6 +11,7 @@
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <errno.h>
+#include <limits.h>
 using namespace std;
 
 void error(const char* msg) {
@@ -27,8 +28,15 @@ void flagNonBlocking(int socket) {
 		error("Failed to set socket flags");
 }
 
-WebServer::WebServer(char* port)
+WebServer::WebServer(char* port, int threadCount)
+	: numThreads(threadCount)
 {
+	threads = new ProcessingThread[threadCount];
+	for (int i=0;i<threadCount;i++)
+	{
+		threads[i].setKeepAliveThread(&keepAliveKillerThread);
+		threads[i].start();
+	}
 	keepRunning = true;
 
 	struct addrinfo hints, *result, *i;
@@ -138,7 +146,31 @@ void WebServer::run()
 			}
 			else
 			{
-				thread.enqueueFileDescriptor(events[currentEventIndex].data.fd);
+				int minSize = threads[0].queueSize();
+				int minIndex = 0;
+				for (int i=1;i<numThreads;i++)
+				{
+					if (threads[i].queueSize() < minSize)
+					{
+						minSize = threads[i].queueSize();
+						minIndex = i;
+					}
+				}
+				threads[minIndex].enqueueFileDescriptor(events[currentEventIndex].data.fd);
+				/*int pid = fork();
+				if (pid == 0)
+				{
+					threads[0].processFileDescriptor(events[currentEventIndex].data.fd);
+					exit(0);
+				}
+				else if (pid == -1)
+				{
+					cout << "Fork error!" << endl;
+				}
+				else
+				{
+					cout << "Fork successfull!" << endl;
+				}*/
 			}
 		}
 	}
@@ -150,7 +182,9 @@ void WebServer::run()
 
 void WebServer::stop()
 {
-	thread.join();
+	for (int i=0;i<numThreads;i++)
+		threads[i].join();
+	//keepAliveKillerThread.join();
 	eventfd_write(shutdownFD,1);
 }
 

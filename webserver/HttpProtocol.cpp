@@ -3,18 +3,19 @@
 #include <iostream>
 #include <sstream>
 #include <unistd.h>
+#include <cstdio>
 using namespace std;
 
 HttpHeader::HttpHeader()
 {
 }
 
-HttpHeader::HttpHeader(string hline, size_t colSpacePos)
+HttpHeader::HttpHeader(const string& hline, size_t colSpacePos)
 	: field(hline.substr(0,colSpacePos)), value(hline.substr(colSpacePos+2))
 {
 }
 
-HttpHeader::HttpHeader(string f, string v) : field(f), value(v)
+HttpHeader::HttpHeader(const string& f, const string& v) : field(f), value(v)
 {
 }
 
@@ -28,6 +29,24 @@ const string& HttpHeader::getValue()
 	return value;
 }
 
+QueryParameter::QueryParameter()
+{
+}
+
+QueryParameter::QueryParameter(const string& p, const string& v) : param(p), value(v)
+{
+}
+
+const string& QueryParameter::getParam()
+{
+	return param;
+}
+
+const string& QueryParameter::getValue()
+{
+	return value;
+}
+
 
 HttpRequest::HttpRequest(char* data)
 {
@@ -36,6 +55,7 @@ HttpRequest::HttpRequest(char* data)
 	size_t start=0;
 	size_t end = strdata.find("\r\n");
 	bool hasContent = false;
+	keepAlive = false;
 	while (end != string::npos)
 	{
 		lines.push_back(strdata.substr(start,end-start));
@@ -55,20 +75,60 @@ HttpRequest::~HttpRequest()
 {
 	for (unsigned int i=0;i<headers.size();i++)
 		delete headers[i];
+	for (unsigned int i=0;i<parameters.size();i++)
+			delete parameters[i];
 }
 
-void HttpRequest::parseRequestLine(string reqline)
+void HttpRequest::parseRequestLine(string& reqline)
 {
 	size_t sp1 = reqline.find(" ");
 	size_t sp2 = reqline.find(" ",sp1+1);
 	method = reqline.substr(0,sp1);
 	requestURI = reqline.substr(sp1+1,sp2-sp1-1);
+	parseQueryParameters();
+	if (requestURI.length()!=1 && requestURI[requestURI.length()-1]=='/') requestURI.erase(requestURI.end()-1);
 	httpVersion = reqline.substr(sp2);
 }
 
-void HttpRequest::parseHeaderLine(string hline)
+void HttpRequest::parseQueryParameters()
+{
+	size_t qMark = requestURI.find('?');
+	if (qMark != string::npos)
+	{
+		size_t start = qMark+1;
+		size_t mid = requestURI.find('=',start);
+		size_t end = requestURI.find('&',mid);
+		if (end == string::npos)
+		{
+			parameters.push_back(new QueryParameter(requestURI.substr(start,mid-start),requestURI.substr(mid+1)));
+			requestURI = requestURI.substr(0,qMark);
+			return;
+		}
+		parameters.push_back(new QueryParameter(requestURI.substr(start,mid-start),requestURI.substr(mid+1,end-mid-1)));
+		while (end != string::npos)
+		{
+			size_t start = end+1;
+			size_t mid = requestURI.find('=',start);
+			size_t end = requestURI.find('&',mid);
+			if (end == string::npos)
+			{
+				parameters.push_back(new QueryParameter(requestURI.substr(start,mid-start),requestURI.substr(mid+1)));
+				requestURI = requestURI.substr(0,qMark);
+				return;
+			}
+			parameters.push_back(new QueryParameter(requestURI.substr(start,mid-start),requestURI.substr(mid+1,end-mid-1)));
+		}
+	}
+}
+
+void HttpRequest::parseHeaderLine(string& hline)
 {
 	headers.push_back(new HttpHeader(hline,hline.find(": ")));
+	if (headers.back()->getField().compare("Connection") &&
+		headers.back()->getValue().compare("Keep-Alive"))
+	{
+		keepAlive = true;
+	}
 }
 
 const std::string& HttpRequest::getMethod()
@@ -91,7 +151,22 @@ const std::vector<HttpHeader*>& HttpRequest::getHeaders()
 	return headers;
 }
 
-HttpResponse::HttpResponse(string status)
+const std::vector<QueryParameter*>& HttpRequest::getParams()
+{
+	return parameters;
+}
+
+bool HttpRequest::isKeepAlive()
+{
+	return keepAlive;
+}
+
+HttpResponse::HttpResponse()
+	: content(NULL), contentLength(0)
+{
+}
+
+HttpResponse::HttpResponse(const string& status)
 	: statusLine(status), content(NULL), contentLength(0)
 {
 }
@@ -102,7 +177,12 @@ HttpResponse::~HttpResponse()
 		delete headers[i];
 }
 
-void HttpResponse::addHeader(string field, string value)
+void HttpResponse::setStatusLine(const string& stline)
+{
+	this->statusLine = stline;
+}
+
+void HttpResponse::addHeader(const string& field, const string& value)
 {
 	headers.push_back(new HttpHeader(field,value));
 }
@@ -115,18 +195,50 @@ void HttpResponse::setContent(void* content, unsigned length)
 
 void HttpResponse::writeToFD(int fd)
 {
-	write(fd,statusLine.c_str(),statusLine.length());
-	write(fd,"\r\n",2);
+	if (write(fd,statusLine.c_str(),statusLine.length()) == -1)
+	{
+		perror("Failed while writing status line");
+		return;
+	}
+	if (write(fd,"\r\n",2) == -1)
+	{
+		perror("Failed while writing status line delimiter");
+		return;
+	}
 	for (unsigned i=0;i<headers.size();i++)
 	{
-		write(fd,headers[i]->getField().c_str(),headers[i]->getField().length());
-		write(fd,": ",2);
-		write(fd,headers[i]->getValue().c_str(),headers[i]->getValue().length());
-		write(fd,"\r\n",2);
+		if (write(fd,headers[i]->getField().c_str(),headers[i]->getField().length()) == -1)
+		{
+			perror("Failed while writing header field");
+			return;
+		}
+		if (write(fd,": ",2) == -1)
+		{
+			perror("Failed while writing header field delimited");
+			return;
+		}
+		if (write(fd,headers[i]->getValue().c_str(),headers[i]->getValue().length()) == -1)
+		{
+			perror("Failed while writing header value");
+			return;
+		}
+		if (write(fd,"\r\n",2) == -1)
+		{
+			perror("Failed while writing header delimiter");
+			return;
+		}
 	}
-	write(fd,"\r\n",2);
+	if (write(fd,"\r\n",2) == -1)
+	{
+		perror("Failed while writing final header delimiter");
+		return;
+	}
 	if (content != NULL)
 	{
-		write(fd,content,contentLength);
+		if (write(fd,content,contentLength) == -1)
+		{
+			perror("Failed while writing content");
+			return;
+		}
 	}
 }

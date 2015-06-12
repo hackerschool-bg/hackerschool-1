@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstdio>
 #include <cstdlib>
+#include <algorithm>
 using namespace std;
 
 bool isFile(const char* path)
@@ -36,6 +37,7 @@ void dirLs(const char* dir, vector<string>& files)
 	{
 		files.push_back(string(dirp->d_name));
 	}
+	sort(files.begin(),files.end());
 	closedir(dp);
 }
 

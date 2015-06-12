@@ -10,10 +10,23 @@ private:
 	std::string value;
 public:
 	HttpHeader();
-	HttpHeader(std::string headerLine, size_t colSpacePos);
-	HttpHeader(std::string field, std::string value);
+	HttpHeader(const std::string& headerLine, size_t colSpacePos);
+	HttpHeader(const std::string& field, const std::string& value);
 
 	const std::string& getField();
+	const std::string& getValue();
+};
+
+class QueryParameter
+{
+private:
+	std::string param;
+	std::string value;
+public:
+	QueryParameter();
+	QueryParameter(const std::string& param, const std::string& value);
+
+	const std::string& getParam();
 	const std::string& getValue();
 };
 
@@ -24,9 +37,12 @@ private:
 	std::string requestURI;
 	std::string httpVersion;
 	std::vector<HttpHeader*> headers;
+	std::vector<QueryParameter*> parameters;
+	bool keepAlive;
 
-	void parseRequestLine(std::string reqline);
-	void parseHeaderLine(std::string hline);
+	void parseRequestLine(std::string& reqline);
+	void parseQueryParameters();
+	void parseHeaderLine(std::string& hline);
 public:
 	HttpRequest(char* data);
 	~HttpRequest();
@@ -35,6 +51,8 @@ public:
 	const std::string& getRequestURI();
 	const std::string& getHttpVersion();
 	const std::vector<HttpHeader*>& getHeaders();
+	const std::vector<QueryParameter*>& getParams();
+	bool isKeepAlive();
 };
 
 class HttpResponse
@@ -45,10 +63,12 @@ private:
 	void* content;
 	unsigned contentLength;
 public:
-	HttpResponse(std::string statusLine);
+	HttpResponse();
+	HttpResponse(const std::string& statusLine);
 	~HttpResponse();
 
-	void addHeader(std::string field, std::string value);
+	void setStatusLine(const std::string& stline);
+	void addHeader(const std::string& field, const std::string& value);
 	void setContent(void* content, unsigned length);
 
 	void writeToFD(int fd);
